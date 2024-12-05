@@ -2,55 +2,58 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	  "github.com/joho/godotenv"
+	// "os/signal"
+	// "syscall"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
+	// "github.com/joho/godotenv"
+
+	// "github.com/gofiber/fiber/v2"
+	// "github.com/gofiber/fiber/v2/middleware/logger"
 )
 
-func main() {
-	app := fiber.New()
-	app.Use(logger.New())
 
-	log.Println("Starting orders microservice")
-  	err := godotenv.Load()
-    if err != nil {
-        log.Println("No .env file found, using default environment variables")
-    }
+	func main() {
+		log.Println("Starting orders microservice")
 	
-	bindAddr := os.Getenv("SHOP_ORDERS_SERVICE_BIND_ADDR")
-
-	if bindAddr == "" {
-		bindAddr = ":3000" 
-	}
-
-
-
+		ctx := cmd.Context()
 	
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
-
-	
+		r, closeFn := createOrdersMicroservice()
+		defer closeFn()
+		server := &http.Server{Addr: os.Getenv("SHOP_ORDERS_SERVICE_BIND_ADDR"), Handler: r}
 	go func() {
-		if err := app.Listen(bindAddr); err != nil  {
-			log.Fatalf("Failed to start server: %v", err)
+		if err := server.ListenAndServe(); err != http.ErrServerClosed {
+			panic(err)
 		}
 	}()
 
+	<-ctx.Done()
+	log.Println("Closing orders microservice")
+
+	if err := server.Close(); err != nil {
+		panic(err)
+	}
+}
+
+func createOrdersMicroservice() (router *chi.Mux, closeFn func()) {
+	cmd.WaitForService(os.Getenv("SHOP_RABBITMQ_ADDR"))
+
+	shopHTTPClient := orders_infra_product.NewHTTPClient(os.Getenv("SHOP_SHOP_SERVICE_ADDR"))
+
+	ordersToPayQueue, err := orders_infra_payments.NewAMQPService(
+		fmt.Sprintf("amqp://%s/", os.Getenv("SHOP_RABBITMQ_ADDR")),
+		os.Getenv("SHOP_RABBITMQ_ORDERS_TO_PAY_QUEUE"),
+	)
+	if err != nil {
+		panic(err)
+	}
+}
+
+
 	
-	select {
-	case sig := <-signalChan:
-		log.Printf("Received signal: %v, shutting down...", sig)
-	}
 
 
-	if err := app.Shutdown(); err != nil {
-		log.Fatalf("Failed to shutdown server: %v", err)
-	}
-}
+	
 
- func createOrdersMicroservice(app *fiber.App) {
-}
+
